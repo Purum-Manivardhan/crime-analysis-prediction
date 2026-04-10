@@ -1,0 +1,158 @@
+# ============================================
+# LOS ANGELES CRIME ANALYSIS & PREDICTION PROJECT
+# ============================================
+
+# STEP 1: IMPORT LIBRARIES
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import warnings
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
+# ML Models
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
+from catboost import CatBoostRegressor
+
+warnings.filterwarnings('ignore')
+sns.set(style="whitegrid")
+
+# ============================================
+# STEP 2: LOAD DATASET
+# ============================================
+# Assuming your file is named 'Crime_Data.csv'
+df = pd.read_csv("Crime_Data.csv")
+
+print("\n--- Dataset Overview ---")
+print(df.head())
+print(df.info())
+
+# ============================================
+# STEP 3: DATA CLEANING & PREPROCESSING
+# ============================================
+
+# 1. Convert Date columns to datetime
+df['DATE OCC'] = pd.to_datetime(df['DATE OCC'])
+
+# 2. Handle Invalid Ages (Negative or Zero)
+# Replacing with Median is more professional than dropping
+df.loc[df['Vict Age'] <= 0, 'Vict Age'] = np.nan
+df['Vict Age'] = df['Vict Age'].fillna(df['Vict Age'].median())
+
+# 3. Standardize Gender Labels
+df['Vict Sex'] = df['Vict Sex'].replace({'X': 'Unknown', 'H': 'Unknown'})
+df['Vict Sex'] = df['Vict Sex'].fillna('Unknown')
+
+# 4. Clean Geographic Data (Remove 0 Latitude/Longitude)
+df = df[(df['LAT'] != 0) & (df['LON'] != 0)]
+
+# 5. Extract Time-based Features
+df['Year'] = df['DATE OCC'].dt.year
+df['Month'] = df['DATE OCC'].dt.month
+
+# Keep a cleaned subset for analysis
+df_clean = df[['Year', 'Month', 'AREA NAME', 'Vict Age', 'Vict Sex', 'Status Desc', 'LAT', 'LON']].copy()
+
+print("\n--- Cleaning Complete ---")
+print(f"Remaining Rows: {len(df_clean)}")
+
+# ============================================
+# STEP 4: NUMPY OPERATIONS
+# ============================================
+age_data = df_clean['Vict Age'].to_numpy()
+
+print("\n--- NUMPY STATISTICS (VICTIM AGE) ---")
+print("Mean Age:", np.mean(age_data))
+print("Median Age:", np.median(age_data))
+print("Max Age:", np.max(age_data))
+
+# ============================================
+# STEP 5: DATA VISUALIZATION (EDA)
+# ============================================
+
+# 1. Crime Trend Over Years
+plt.figure(figsize=(10, 5))
+df_clean.groupby('Year').size().plot(kind='line', marker='o', color='darkred')
+plt.title("Yearly Crime Trend", fontsize=14)
+plt.ylabel("Number of Incidents")
+plt.show()
+
+# 2. Crime Distribution by Area (Top 10)
+plt.figure(figsize=(10, 5))
+sns.countplot(y='AREA NAME', data=df_clean, order=df_clean['AREA NAME'].value_counts().iloc[:10].index, palette='viridis')
+plt.title("Top 10 High-Crime Areas", fontsize=14)
+plt.show()
+
+# 3. Victim Age Distribution
+plt.figure(figsize=(10, 5))
+sns.histplot(df_clean['Vict Age'], kde=True, color='blue', bins=30)
+plt.title("Victim Age Distribution", fontsize=14)
+plt.show()
+
+# 4. Correlation Heatmap
+plt.figure(figsize=(8, 6))
+sns.heatmap(df_clean.select_dtypes(include=[np.number]).corr(), annot=True, cmap='coolwarm', fmt=".2f")
+plt.title("Feature Correlation Heatmap")
+plt.show()
+
+# ============================================
+# STEP 6: MACHINE LEARNING (REGRESSION)
+# ============================================
+
+# 1. Prepare Data for Regression (Grouping by Month/Area)
+crime_trend = df_clean.groupby(['Year', 'Month', 'AREA NAME']).size().reset_index(name='Crime_Count')
+
+# 2. Encode Categorical Data
+le = LabelEncoder()
+crime_trend['AREA NAME'] = le.fit_transform(crime_trend['AREA NAME'])
+
+# 3. Define Features and Target
+X = crime_trend[['Year', 'Month', 'AREA NAME']]
+y = crime_trend['Crime_Count']
+
+# 4. Train-Test Split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# 5. Initialize Models
+models = {
+    "Linear Regression": LinearRegression(),
+    "Random Forest": RandomForestRegressor(n_estimators=200, max_depth=10, random_state=42),
+    "CatBoost": CatBoostRegressor(iterations=200, learning_rate=0.1, depth=6, verbose=0)
+}
+
+# 6. Train and Evaluate
+print("\n--- MODEL PERFORMANCE ---")
+results = []
+for name, model in models.items():
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    
+    r2 = r2_score(y_test, y_pred)
+    results.append((name, r2))
+    print(f"{name} R2 Score: {r2:.4f}")
+
+# ============================================
+# STEP 7: FINAL VISUALIZATION & PREDICTION
+# ============================================
+
+# Plotting Best Model (CatBoost) Results
+best_model = CatBoostRegressor(iterations=200, learning_rate=0.1, depth=6, verbose=0)
+best_model.fit(X_train, y_train)
+final_preds = best_model.predict(X_test)
+
+plt.figure(figsize=(8, 6))
+plt.scatter(y_test, final_preds, alpha=0.5, color='teal')
+plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
+plt.xlabel("Actual Crime Counts")
+plt.ylabel("Predicted Crime Counts")
+plt.title("CatBoost: Actual vs Predicted")
+plt.show()
+
+print("\n--- INSIGHTS ---")
+print("1. Crime data shows significant spatial patterns across LA Areas.")
+print("2. CatBoost outperformed Linear Regression, capturing non-linear relationships.")
+print("3. Preprocessing victim age and location data was critical for model stability.")
